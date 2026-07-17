@@ -1,3 +1,10 @@
 .venv/
 __pycache__/
 *.pyc
+.env
+
+# Photo indexing project - data files, not code
+*.db
+*.db-wal
+*.db-shm
+*_log.txt
