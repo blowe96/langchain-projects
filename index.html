@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Family Photo Index</title>
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 0; background: #111; color: #eee; }
+  header { padding: 16px 24px; background: #1a1a1a; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 18px; margin: 0; }
+  nav button { background: none; border: none; color: #aaa; font-size: 15px; padding: 10px 16px; cursor: pointer; }
+  nav button.active { color: #fff; border-bottom: 2px solid #4a9eff; }
+  #stats { font-size: 12px; color: #888; }
+  main { padding: 20px; }
+  .cluster-grid, .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
+  .cluster-card { background: #1e1e1e; border-radius: 8px; padding: 12px; }
+  .face-thumbs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+  .face-thumbs img { width: 45px; height: 45px; object-fit: cover; border-radius: 4px; }
+  .cluster-card input { width: 100%; padding: 6px; border-radius: 4px; border: 1px solid #444; background: #111; color: #eee; margin-bottom: 6px; box-sizing: border-box; }
+  .cluster-card button { width: 100%; padding: 6px; border-radius: 4px; border: none; background: #4a9eff; color: white; cursor: pointer; }
+  .cluster-card .count { font-size: 12px; color: #888; margin-bottom: 6px; }
+  .photo-card img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; cursor: pointer; }
+  .photo-card .date { font-size: 11px; color: #888; margin-top: 4px; }
+  .filters { margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .filters input, .filters select { padding: 8px; border-radius: 6px; border: 1px solid #444; background: #1e1e1e; color: #eee; }
+  #lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 100; align-items: center; justify-content: center; }
+  #lightbox img, #lightbox video { max-width: 90%; max-height: 90%; }
+  #lightbox .caption { position: absolute; bottom: 20px; left: 0; right: 0; text-align: center; color: #ccc; }
+  #lightbox .close { position: absolute; top: 20px; right: 30px; font-size: 28px; color: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Family Photo Index</h1>
+  <nav>
+    <button id="tab-people" class="active" onclick="showTab('people')">People</button>
+    <button id="tab-gallery" onclick="showTab('gallery')">Gallery</button>
+  </nav>
+  <div id="stats">Loading stats...</div>
+</header>
+
+<main>
+  <div id="view-people">
+    <div class="filters">
+      <select id="labeled-filter" onchange="loadClusters()">
+        <option value="">All clusters</option>
+        <option value="false" selected>Unlabeled only</option>
+        <option value="true">Labeled only</option>
+      </select>
+    </div>
+    <div class="cluster-grid" id="cluster-grid">Loading...</div>
+  </div>
+
+  <div id="view-gallery" style="display:none">
+    <div class="filters">
+      <input type="number" id="filter-year" placeholder="Year (e.g. 2017)">
+      <input type="text" id="filter-tag" placeholder="Tag (e.g. yellow car)">
+      <button onclick="loadGallery()">Search</button>
+    </div>
+    <div class="photo-grid" id="photo-grid">Loading...</div>
+  </div>
+</main>
+
+<div id="lightbox">
+  <span class="close" onclick="closeLightbox()">&times;</span>
+  <img id="lightbox-img" style="display:none">
+  <video id="lightbox-video" controls style="display:none"></video>
+  <div class="caption" id="lightbox-caption"></div>
+</div>
+
+<script>
+const API = "";
+
+async function loadStats() {
+  const r = await fetch(`${API}/api/stats`);
+  const s = await r.json();
+  document.getElementById('stats').textContent =
+    `${s.captioned_files.toLocaleString()} / ${s.total_files.toLocaleString()} captioned  |  ${s.labeled_clusters} / ${s.total_clusters} people labeled`;
+}
+
+function showTab(tab) {
+  document.getElementById('view-people').style.display = tab === 'people' ? 'block' : 'none';
+  document.getElementById('view-gallery').style.display = tab === 'gallery' ? 'block' : 'none';
+  document.getElementById('tab-people').classList.toggle('active', tab === 'people');
+  document.getElementById('tab-gallery').classList.toggle('active', tab === 'gallery');
+  if (tab === 'gallery') loadGallery();
+}
+
+async function loadClusters() {
+  const labeled = document.getElementById('labeled-filter').value;
+  let url = `${API}/api/clusters?min_faces=2&limit=60`;
+  if (labeled) url += `&labeled=${labeled}`;
+  const r = await fetch(url);
+  const clusters = await r.json();
+
+  const grid = document.getElementById('cluster-grid');
+  grid.innerHTML = '';
+
+  for (const c of clusters) {
+    const faceIds = await (await fetch(`${API}/api/clusters/${c.id}/faces?limit=6`)).json();
+    const card = document.createElement('div');
+    card.className = 'cluster-card';
+    card.innerHTML = `
+      <div class="face-thumbs">
+        ${faceIds.map(fid => `<img src="${API}/api/face_thumbnail/${fid}">`).join('')}
+      </div>
+      <div class="count">${c.face_count} photos</div>
+      <input type="text" placeholder="Enter name..." value="${c.person_name || ''}" id="name-${c.id}">
+      <button onclick="saveLabel(${c.id})">Save</button>
+    `;
+    grid.appendChild(card);
+  }
+}
+
+async function saveLabel(clusterId) {
+  const name = document.getElementById(`name-${clusterId}`).value.trim();
+  if (!name) return;
+  await fetch(`${API}/api/clusters/${clusterId}/label`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ person_name: name }),
+  });
+  loadClusters();
+  loadStats();
+}
+
+async function loadGallery() {
+  const year = document.getElementById('filter-year').value;
+  const tag = document.getElementById('filter-tag').value;
+  let url = `${API}/api/gallery?limit=60`;
+  if (year) url += `&year=${year}`;
+  if (tag) url += `&tag=${encodeURIComponent(tag)}`;
+
+  const r = await fetch(url);
+  const files = await r.json();
+
+  const grid = document.getElementById('photo-grid');
+  grid.innerHTML = '';
+
+  for (const f of files) {
+    const card = document.createElement('div');
+    card.className = 'photo-card';
+    const thumbSrc = f.media_type === 'photo'
+      ? `${API}/api/media/${f.id}/thumbnail`
+      : '';
+    card.innerHTML = `
+      <img src="${thumbSrc}" onclick="openLightbox(${f.id}, '${f.media_type}', ${JSON.stringify(f.caption || '')})" ${f.media_type !== 'photo' ? 'style="background:#333"' : ''}>
+      <div class="date">${(f.date_taken || '').split('T')[0]}</div>
+    `;
+    grid.appendChild(card);
+  }
+}
+
+function openLightbox(fileId, mediaType, caption) {
+  const lb = document.getElementById('lightbox');
+  const img = document.getElementById('lightbox-img');
+  const video = document.getElementById('lightbox-video');
+  document.getElementById('lightbox-caption').textContent = caption || '';
+
+  if (mediaType === 'photo') {
+    img.src = `${API}/api/media/${fileId}`;
+    img.style.display = 'block';
+    video.style.display = 'none';
+  } else {
+    video.src = `${API}/api/media/${fileId}`;
+    video.style.display = 'block';
+    img.style.display = 'none';
+  }
+  lb.style.display = 'flex';
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').style.display = 'none';
+  document.getElementById('lightbox-video').pause();
+}
+
+loadStats();
+loadClusters();
+setInterval(loadStats, 30000);
+</script>
+
+</body>
+</html>
