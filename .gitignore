@@ -9,3 +9,4 @@ __pycache__/
 *.db-shm
 *_log.txt
 folder_to_place.json
+logs/
